@@ -2,12 +2,15 @@
 pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 
-contract SmartFunding {
+contract SmartFunding is Ownable, Pausable {
+    uint256 fundingStage; // 0 = INACTIVE, 1 = ACTIVE, 2 = SUCCESS, 3 = FAIL
     address public tokenAddress;
     uint256 public goal;
     uint256 public pool;
-    uint256 public endtimeInDay;
+    uint256 public endtime;
 
     mapping(address => uint256) public investOf;
     mapping(address => uint256) public rewardOf;
@@ -17,30 +20,46 @@ contract SmartFunding {
     event ClaimReward(address indexed from, uint256 amount);
     event Refund(address indexed from, uint256 amount);
 
+    modifier atStage(uint256 stage) {
+        require(fundingStage == stage);
+        _;
+    }
+
     constructor(address _tokenAddress) {
         tokenAddress = _tokenAddress;
+        fundingStage = 0;
     }
 
-    function initialize(uint256 _goal, uint256 _endtimeInDay) external {
+    function initialize(uint256 _goal, uint256 _endtime) external onlyOwner {
         goal = _goal;
-        endtimeInDay = block.timestamp + (_endtimeInDay * 1 days);
+        endtime = block.timestamp + (_endtime * 1 days);
+        fundingStage = 1;
     }
 
-    function invest() external payable {
+    function calculateReward(uint256 amount) public view returns (uint256) {
+        uint256 totalPool = pool + amount;
+        uint256 totalSupply = IERC20(tokenAddress).totalSupply();
+
+        if (totalPool <= goal) {
+            return (totalSupply / goal) * amount;
+        } else {
+            return (totalSupply / goal) * (goal - pool);
+        }
+    }
+
+    function invest() external payable atStage(1) whenNotPaused {
         require(msg.value != 0, "Amount should be more than 0");
         require(investOf[msg.sender] == 0, "Already invest");
 
+        uint256 reward = calculateReward(msg.value);
+        rewardOf[msg.sender] = reward;
         investOf[msg.sender] = msg.value;
         pool += msg.value;
-
-        uint256 totalSupply = IERC20(tokenAddress).totalSupply();
-        uint256 reward = (totalSupply / goal) * msg.value;
-        rewardOf[msg.sender] = reward;
 
         emit Invest(msg.sender, msg.value);
     }
 
-    function claim() external {
+    function claim() external atStage(2) whenNotPaused {
         require(claimedOf[msg.sender] == false, "Already claim");
         require(rewardOf[msg.sender] > 0, "No reward");
 
@@ -52,7 +71,7 @@ contract SmartFunding {
         emit ClaimReward(msg.sender, reward);
     }
 
-    function refund() external {
+    function refund() external atStage(3) whenNotPaused {
         require(investOf[msg.sender] > 0, "No invest");
 
         uint256 investAmount = investOf[msg.sender];
@@ -63,5 +82,13 @@ contract SmartFunding {
         payable(msg.sender).transfer(investAmount);
 
         emit Refund(msg.sender, investAmount);
+    }
+
+    function pause() public onlyOwner {
+        _pause();
+    }
+
+    function unpause() public onlyOwner {
+        _unpause();
     }
 }

@@ -1,6 +1,7 @@
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 import { expect } from "chai"
 import { ethers, waffle } from "hardhat"
+import { MockContract, smock } from '@defi-wonderland/smock'
 import { MyToken, SmartFunding } from "../typechain"
 
 const { utils } = ethers
@@ -50,7 +51,7 @@ describe('Smart funding operations', async () => {
     let invester3: SignerWithAddress
 
     let myTokenContract: MyToken
-    let smartFundingContract: SmartFunding
+    let smartFundingContract: MockContract
 
     beforeEach(async () => {
         [owner, invester1, invester2, invester3] = await ethers.getSigners()
@@ -60,7 +61,7 @@ describe('Smart funding operations', async () => {
         myTokenContract = await MyToken.deploy()
         await myTokenContract.deployed()
 
-        const SmartFunding = await ethers.getContractFactory("SmartFunding")
+        const SmartFunding = await smock.mock("SmartFunding")
         smartFundingContract = await SmartFunding.deploy(myTokenContract.address)
         await smartFundingContract.deployed()
         await smartFundingContract.initialize(utils.parseEther('1'), 7)
@@ -91,6 +92,8 @@ describe('Smart funding operations', async () => {
         const tx2 = await smartFundingContract.connect(invester2).invest({ value: utils.parseEther('0.1') })
         await tx2.wait()
 
+        await smartFundingContract.setVariable('fundingStage', 2)
+
         const tx1claim = await smartFundingContract.connect(invester1).claim()
         await tx1claim.wait()
         expect(await smartFundingContract.claimedOf(invester1.address)).to.equal(true)
@@ -102,14 +105,17 @@ describe('Smart funding operations', async () => {
         expect(await myTokenContract.balanceOf(smartFundingContract.address)).to.equal(utils.parseUnits('100000', decimals))
     })
 
-    it('Should reject clain with no invest', async () => {
+    it('Should reject claim with no invest', async () => {
+        await smartFundingContract.setVariable('fundingStage', 2)
         const tx1claim = smartFundingContract.connect(invester1).claim()
         await expect(tx1claim).to.be.revertedWith("No reward")
     })
 
-    it('Should reject clain with already claimed reward', async () => {
+    it('Should reject claim with already claimed reward', async () => {
         const tx1 = await smartFundingContract.connect(invester1).invest({ value: utils.parseEther('0.9') })
         await tx1.wait()
+        await smartFundingContract.setVariable('fundingStage', 2)
+
         const tx1claim = await smartFundingContract.connect(invester1).claim()
         await tx1claim.wait()
 
@@ -121,6 +127,8 @@ describe('Smart funding operations', async () => {
         const tx1 = await smartFundingContract.connect(invester1).invest({ value: utils.parseEther('0.9') })
         await tx1.wait()
         expect(await provider.getBalance(smartFundingContract.address)).to.equal(utils.parseEther('0.9'))
+
+        await smartFundingContract.setVariable('fundingStage', 3)
 
         const tx1refund = await smartFundingContract.connect(invester1).refund()
         await tx1refund.wait()
@@ -134,10 +142,22 @@ describe('Smart funding operations', async () => {
         await tx1.wait()
         expect(await provider.getBalance(smartFundingContract.address)).to.equal(utils.parseEther('0.9'))
 
+        await smartFundingContract.setVariable('fundingStage', 3)
+
         const tx1refund = await smartFundingContract.connect(invester1).refund()
         await tx1refund.wait()
 
         const tx1refundAgain = smartFundingContract.connect(invester1).refund()
         await expect(tx1refundAgain).to.be.revertedWith("No invest")
+    })
+
+    it('Should calculate normal case success', async () => {
+        const result = await smartFundingContract.calculateReward(utils.parseEther('0.9'))
+        expect(result).to.equal(utils.parseUnits('900000', decimals))
+    })
+
+    it('Should calculate over pay case success', async () => {
+        const result = await smartFundingContract.calculateReward(utils.parseEther('2'))
+        expect(result).to.equal(utils.parseUnits('1000000', decimals))
     })
 })
