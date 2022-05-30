@@ -11,8 +11,11 @@ contract SmartFunding {
 
     mapping(address => uint256) public investOf;
     mapping(address => uint256) public rewardOf;
+    mapping(address => bool) public claimedOf;
 
     event Invest(address indexed from, uint256 amount);
+    event ClaimReward(address indexed from, uint256 amount);
+    event Refund(address indexed from, uint256 amount);
 
     constructor(address _tokenAddress) {
         tokenAddress = _tokenAddress;
@@ -35,5 +38,30 @@ contract SmartFunding {
         rewardOf[msg.sender] = reward;
 
         emit Invest(msg.sender, msg.value);
+    }
+
+    function claim() external {
+        require(claimedOf[msg.sender] == false, "Already claim");
+        require(rewardOf[msg.sender] > 0, "No reward");
+
+        uint256 reward = rewardOf[msg.sender];
+        claimedOf[msg.sender] = true;
+        rewardOf[msg.sender] = 0;
+        IERC20(tokenAddress).transfer(msg.sender, reward);
+
+        emit ClaimReward(msg.sender, reward);
+    }
+
+    function refund() external {
+        require(investOf[msg.sender] > 0, "No invest");
+
+        uint256 investAmount = investOf[msg.sender];
+        investOf[msg.sender] = 0;
+        rewardOf[msg.sender] = 0;
+        pool -= investAmount;
+
+        payable(msg.sender).transfer(investAmount);
+
+        emit Refund(msg.sender, investAmount);
     }
 }
